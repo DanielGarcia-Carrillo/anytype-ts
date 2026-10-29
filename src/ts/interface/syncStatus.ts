@@ -42,6 +42,7 @@ export enum P2PStatus {
 	NotConnected 	= 0,
 	NotPossible 	= 1,
 	Connected 		= 2,
+	Restricted 		= 3,
 };
 
 export interface P2PSyncStatus {
