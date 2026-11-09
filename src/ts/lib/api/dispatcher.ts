@@ -15,6 +15,7 @@ import { liveAddIndex } from 'Lib/util/chatWindow';
 import { applySubscriptionPosition } from 'Lib/util/subscription';
 import { approvalSpaces } from 'Lib/linkApproval';
 import { membership } from 'Lib/membership';
+import Storage from 'Lib/storage';
 
 const SORT_IDS = [
 	'BlockAdd',
@@ -40,6 +41,20 @@ const SKIP_ERRORS = [ 'LinkPreview', 'BlockTextSetText', 'FileSpaceUsage', 'Spac
 const SKIP_ERROR_CODES = {
 	WorkspaceOpen: [ 100 ],
 };
+
+// gRPC status UNAUTHENTICATED: the middleware does not accept the session token
+const GRPC_UNAUTHENTICATED = 16;
+
+// Commands that run without a session or that create one: a new session cannot help them
+const SKIP_SESSION_RECOVERY = [
+	'AppGetVersion',
+	'WalletCreate',
+	'WalletRecover',
+	'WalletCreateSession',
+	'WalletCloseSession',
+	'AccountLocalLinkNewChallenge',
+	'AccountLocalLinkSolveChallenge',
+];
 
 // Commands whose response mapper also runs when the RPC returned an error
 const MAP_ON_ERROR = [ 'ObjectListExport', 'ObjectExport', 'MembershipV2GetStatus', 'MembershipV2GetProducts' ];
@@ -72,6 +87,7 @@ class Dispatcher {
 	flushScheduled = false;
 	rafId = 0;
 	flushTimerId = 0;
+	sessionRecoveryCallbacks: ((isRecovered: boolean) => void)[] = null;
 
 	/**
 	 * Initialize the gRPC client with the middleware server address.
@@ -152,10 +168,23 @@ class Dispatcher {
 		});
 
 		this.stream.on('status', (status) => {
-			if (status.code) {
-				console.error('[Dispatcher.stream] Restarting', status);
-				this.reconnect();
+			if (!status.code) {
+				return;
 			};
+
+			// A rejected token stays rejected: reconnecting with it would loop forever
+			if (status.code == GRPC_UNAUTHENTICATED) {
+				console.error('[Dispatcher.stream] Session rejected, recovering', status);
+				this.recoverSession((isRecovered: boolean) => {
+					if (!isRecovered) {
+						this.reconnect();
+					};
+				});
+				return;
+			};
+
+			console.error('[Dispatcher.stream] Restarting', status);
+			this.reconnect();
 		});
 
 		this.stream.on('end', () => {
@@ -1800,8 +1829,9 @@ class Dispatcher {
 	 * @param type - The command type name (e.g., 'ObjectOpen', 'BlockCreate')
 	 * @param data - The protobuf request object with command parameters
 	 * @param callBack - Optional callback invoked with the processed response
+	 * @param isRetry - The request already ran once and failed with a rejected session token
 	 */
-	public request (type: string, data: any, callBack?: (message: any) => void) {
+	public request (type: string, data: any, callBack?: (message: any) => void, isRetry?: boolean) {
 		type = type.replace(/^command_/, '');
 
 		const { config } = S.Common;
@@ -1819,11 +1849,35 @@ class Dispatcher {
 			console.log(debugJson ? JSON.stringify(d, null, 3) : d);
 		};
 
+		const sentToken = S.Auth.token;
+
 		try {
 			this.service.request(type, data, this.metadata(), (error: any, response: any) => {
 				if (error) {
 					console.error('GRPC Error', type, error);
-					callBack?.({ error: { code: error.code, description: error.message } });
+
+					if ((error.code == GRPC_UNAUTHENTICATED) && sentToken && !isRetry && !SKIP_SESSION_RECOVERY.includes(type)) {
+						const retry = () => this.request(type, data, callBack, true);
+
+						// Another request already replaced the token: only this request is stale
+						if (S.Auth.token && (S.Auth.token != sentToken)) {
+							retry();
+							return;
+						};
+
+						this.recoverSession((isRecovered: boolean) => {
+							if (isRecovered) {
+								retry();
+							} else {
+								callBack?.({ error: { code: error.code, description: translate('errorSessionExpired') } });
+							};
+						});
+						return;
+					};
+
+					const description = (error.code == GRPC_UNAUTHENTICATED) ? translate('errorSessionExpired') : error.message;
+
+					callBack?.({ error: { code: error.code, description } });
 					return;
 				};
 
@@ -1911,6 +1965,68 @@ class Dispatcher {
 		} catch (err) {
 			console.error(err);
 		};
+	};
+
+	/**
+	 * Replace a session token the middleware rejects with a new session from the keychain phrase.
+	 * The middleware rejects a token after it changed its signing key, for example when another
+	 * tab recovered the wallet while every tab logged in again after the computer woke up.
+	 * Concurrent callers share one attempt.
+	 * @param callBack - Invoked with true when a new session is active
+	 */
+	recoverSession (callBack: (isRecovered: boolean) => void) {
+		if (this.sessionRecoveryCallbacks) {
+			this.sessionRecoveryCallbacks.push(callBack);
+			return;
+		};
+
+		this.sessionRecoveryCallbacks = [ callBack ];
+
+		const finish = (isRecovered: boolean) => {
+			const callbacks = this.sessionRecoveryCallbacks || [];
+
+			this.sessionRecoveryCallbacks = null;
+			console.log('[Dispatcher.recoverSession]', isRecovered ? 'recovered' : 'failed');
+			callbacks.forEach(cb => cb(isRecovered));
+		};
+
+		const accountId = Storage.get('accountId');
+
+		// No token means no session to recover: the user logged out, or never logged in
+		if (!accountId || !S.Auth.token) {
+			finish(false);
+			return;
+		};
+
+		const promise = Renderer.send('keytarGet', accountId);
+
+		if (!promise || !promise.then) {
+			finish(false);
+			return;
+		};
+
+		promise.then((phrase: string) => {
+			if (!phrase) {
+				finish(false);
+				return;
+			};
+
+			this.request('WalletCreateSession', { mnemonic: phrase }, (message: any) => {
+				// A logout while the new session was being created wins
+				if (message.error.code || !message.token || !S.Auth.token) {
+					finish(false);
+					return;
+				};
+
+				S.Auth.tokenSet(message.token);
+				S.Auth.appTokenSet(message.appToken);
+				this.startStream();
+				finish(true);
+			});
+		}).catch((e: any) => {
+			console.error('[Dispatcher.recoverSession] keytarGet failed', e);
+			finish(false);
+		});
 	};
 
 	/**
