@@ -28,6 +28,10 @@ const NEW_WINDOW_SHIFT = 30;
 const TAB_BAR_HEIGHT = 52;
 const MENU_BAR_HEIGHT = 28;
 
+// Experiment switches for comparing memory with and without hidden background tabs, in one build
+const KEEP_BACKGROUND_TABS_VISIBLE = process.env.ANYTYPE_KEEP_TABS_VISIBLE === '1';
+const LOG_TAB_VISIBILITY = process.env.ANYTYPE_LOG_TAB_VISIBILITY === '1';
+
 class WindowManager {
 
 	list: Set<AppWindow> = new Set();
@@ -612,6 +616,9 @@ class WindowManager {
 		// Only set active if not explicitly disabled
 		if (setActive !== false) {
 			this.setActiveTab(win, id);
+		} else
+		if (!KEEP_BACKGROUND_TABS_VISIBLE) {
+			view.setVisible(false);
 		};
 
 		this.updateTabBarVisibility(win);
@@ -641,6 +648,11 @@ class WindowManager {
 
 		const currentActive = Util.getActiveView(win);
 		if (currentActive) {
+			// Taking the view out of the window does not tell Chromium the page is hidden, so
+			// the background page could keep its compositor and GPU tiles. Hide it as well
+			if ((currentActive.id != id) && !KEEP_BACKGROUND_TABS_VISIBLE) {
+				currentActive.setVisible(false);
+			};
 			win.contentView.removeChildView(currentActive);
 		};
 
@@ -650,6 +662,7 @@ class WindowManager {
 		view.setBounds({ x: 0, y: tabBarHeight, width: bounds.width, height: bounds.height - tabBarHeight });
 
 		win.activeTabId = id;
+		view.setVisible(true);
 		win.contentView.addChildView(view);
 
 		// Lazy load: if the tab hasn't been loaded yet, load it now
@@ -662,6 +675,32 @@ class WindowManager {
 
 		win.webContents.send('set-active-tab', id);
 		Util.sendToAllTabs(win, 'set-active-tab', id);
+
+		if (LOG_TAB_VISIBILITY) {
+			this.logTabVisibility(win);
+		};
+	};
+
+	/**
+	 * Logs what each loaded tab's page reports as its visibility, a second after a tab switch
+	 */
+	logTabVisibility (win: AppWindow): void {
+		setTimeout(() => {
+			if (!win || win.isDestroyed() || !win.views) {
+				return;
+			};
+
+			win.views.forEach((it: TabView) => {
+				if (!it.isLoaded || !it.webContents || it.webContents.isDestroyed()) {
+					return;
+				};
+
+				it.webContents.executeJavaScript('document.visibilityState').then((state: string) => {
+					const role = (it.id == win.activeTabId) ? 'active' : 'background';
+					Util.log('info', `[WindowManager] tab ${it.id} (${role}, pid ${it.webContents.getOSProcessId()}): ${state}`);
+				}).catch(() => {});
+			});
+		}, 1000);
 	};
 
 	updateTab (win: AppWindow, id: string, data: Partial<TabData>): void {
