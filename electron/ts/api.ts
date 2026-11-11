@@ -347,6 +347,12 @@ class Api {
 		});
 	};
 
+	setTabSleepMinutes (win: AppWindow, minutes: number): void {
+		this.setConfig(win, { tabSleepMinutes: Math.max(0, Number(minutes) || 0) }, () => {
+			WindowManager.rescheduleTabSleep();
+		});
+	};
+
 	setHardwareAcceleration (win: AppWindow, enabled: boolean): void {
 		const store = getSafeStorage();
 

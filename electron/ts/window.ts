@@ -27,11 +27,14 @@ const MIN_HEIGHT = 480;
 const NEW_WINDOW_SHIFT = 30;
 const TAB_BAR_HEIGHT = 52;
 const MENU_BAR_HEIGHT = 28;
+const TAB_SLEEP_DEFAULT_MINUTES = 15;
+const TAB_SESSION_CLOSE_TIMEOUT = 5000;
 
 class WindowManager {
 
 	list: Set<AppWindow> = new Set();
 	quickSearchShownAt = 0;
+	sleepTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
 
 	create (options: Partial<CreateMainOptions> & Record<string, any>, param: Record<string, any>): AppWindow {
 
@@ -56,6 +59,7 @@ class WindowManager {
 		this.list.add(win);
 
 		win.on('closed', () => {
+			(win.views || []).forEach((it: TabView) => this.cancelTabSleep(it.id));
 			this.list.delete(win);
 		});
 
@@ -510,6 +514,37 @@ class WindowManager {
 
 		const id = randomUUID();
 		const { deferLoad, setActive } = options || {};
+		const view = this.createTabView(win, id, param);
+
+		win.views = win.views || [];
+		win.views.push(view);
+		win.activeTabId = win.activeTabId || id;
+
+		// Only load the tab content if not deferred
+		if (!deferLoad) {
+			view.webContents.loadURL(this.getUrlForNewTab());
+		};
+
+		Util.send(win, 'create-tab', { id: view.id, data: view.data });
+
+		// Only set active if not explicitly disabled
+		if (setActive !== false) {
+			this.setActiveTab(win, id);
+		} else
+		if (!deferLoad) {
+			this.scheduleTabSleep(win, id);
+		};
+
+		this.updateTabBarVisibility(win);
+
+		return view;
+	};
+
+	/**
+	 * Builds the WebContentsView of a tab and wires its handlers, without loading it.
+	 * The id is passed in so that a sleeping tab can get a fresh view under the same id.
+	 */
+	createTabView (win: AppWindow, id: string, param: TabData): TabView {
 		const wcv = new WebContentsView({
 			webPreferences: {
 				...this.getPreferencesForNewWindow(),
@@ -519,10 +554,7 @@ class WindowManager {
 		// Each tab has its own background, exposed while its renderer catches up during resize.
 		wcv.setBackgroundColor(Util.getBgColor(Util.getTheme()));
 
-		win.views = win.views || [];
 		const view = Object.assign(wcv, { id, data: { ...param }, isLoaded: false }) as TabView;
-		win.views.push(view);
-		win.activeTabId = win.activeTabId || id;
 
 		view.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
 			if (isExternalUrlAllowed(url)) {
@@ -602,20 +634,6 @@ class WindowManager {
 
 		remote.enable(view.webContents);
 
-		// Only load the tab content if not deferred
-		if (!deferLoad) {
-			view.webContents.loadURL(this.getUrlForNewTab());
-		};
-
-		Util.send(win, 'create-tab', { id: view.id, data: view.data });
-
-		// Only set active if not explicitly disabled
-		if (setActive !== false) {
-			this.setActiveTab(win, id);
-		};
-
-		this.updateTabBarVisibility(win);
-
 		return view;
 	};
 
@@ -639,9 +657,15 @@ class WindowManager {
 			return;
 		};
 
+		this.cancelTabSleep(id);
+
 		const currentActive = Util.getActiveView(win);
 		if (currentActive) {
 			win.contentView.removeChildView(currentActive);
+
+			if (currentActive.id != id) {
+				this.scheduleTabSleep(win, currentActive.id);
+			};
 		};
 
 		const bounds = this.getBounds(win);
@@ -690,6 +714,8 @@ class WindowManager {
 		const view = win.views.find((it: TabView) => it.id == id);
 		const index = win.views.findIndex((it: TabView) => it.id == id);
 
+		this.cancelTabSleep(id);
+
 		if (win.activeTabId == id) {
 			win.contentView.removeChildView(view);
 		};
@@ -703,38 +729,162 @@ class WindowManager {
 			this.setActiveTab(win, win.views[newIndex]?.id);
 		};
 
-		// Send close-session to allow renderer to close its session, then destroy the webContents
-		if (view && view.webContents && !view.webContents.isDestroyed()) {
-			const timeout = 5000; // 5 second timeout
-			let handler: ((...args: any[]) => void) | null = null;
-
-			const cleanup = () => {
-				if (handler) {
-					ipcMain.removeListener('tab-session-closed', handler);
-				};
+		// Let the renderer close its session, then destroy the webContents
+		if (view) {
+			this.closeTabSession(win, view, () => {
 				if (view.webContents && !view.webContents.isDestroyed()) {
 					view.webContents.close();
 				};
-			};
-
-			const timeoutId = setTimeout(() => {
-				Util.log('warn', `[WindowManager].removeTab: Timeout waiting for tab ${id} to close session`);
-				cleanup();
-			}, timeout);
-
-			// Listen for the tab to signal it's ready to close
-			handler = (event: Electron.Event, readyTabId: string) => {
-				if (readyTabId === id) {
-					clearTimeout(timeoutId);
-					cleanup();
-				};
-			};
-
-			ipcMain.on('tab-session-closed', handler);
-
-			// Tell the tab to close its session
-			Util.sendToTab(win, view.id, 'close-session');
+			});
 		};
+	};
+
+	/**
+	 * Asks a tab's renderer to close its middleware session and calls back once it has,
+	 * or after a timeout if the renderer does not answer.
+	 */
+	closeTabSession (win: AppWindow, view: TabView, callBack: () => void): void {
+		if (!view.webContents || view.webContents.isDestroyed()) {
+			callBack();
+			return;
+		};
+
+		const id = view.id;
+		let done = false;
+		let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+		const handler = (event: Electron.Event, readyTabId: string) => {
+			if (readyTabId === id) {
+				finish();
+			};
+		};
+
+		const finish = () => {
+			if (done) {
+				return;
+			};
+
+			done = true;
+			if (timeoutId) {
+				clearTimeout(timeoutId);
+			};
+			ipcMain.removeListener('tab-session-closed', handler);
+			callBack();
+		};
+
+		timeoutId = setTimeout(() => {
+			Util.log('warn', `[WindowManager].closeTabSession: Timeout waiting for tab ${id} to close session`);
+			finish();
+		}, TAB_SESSION_CLOSE_TIMEOUT);
+
+		ipcMain.on('tab-session-closed', handler);
+		view.webContents.send('close-session');
+	};
+
+	/**
+	 * Delay before an inactive tab goes to sleep, in milliseconds. 0 turns sleeping off.
+	 */
+	getTabSleepDelay (): number {
+		const minutes = ConfigManager.config.tabSleepMinutes;
+		const value = (undefined === minutes) ? TAB_SLEEP_DEFAULT_MINUTES : (Number(minutes) || 0);
+
+		return Math.max(0, value) * 60 * 1000;
+	};
+
+	scheduleTabSleep (win: AppWindow, id: string): void {
+		this.cancelTabSleep(id);
+
+		const delay = this.getTabSleepDelay();
+		if (!delay || !win || win.isDestroyed() || win.isQuickSearch) {
+			return;
+		};
+
+		this.sleepTimers.set(id, setTimeout(() => {
+			this.sleepTimers.delete(id);
+			this.sleepTab(win, id);
+		}, delay));
+	};
+
+	/**
+	 * Restarts the sleep timers of every inactive loaded tab, after the delay setting changed.
+	 */
+	rescheduleTabSleep (): void {
+		this.list.forEach((win: AppWindow) => {
+			if (!win || win.isDestroyed() || !win.views) {
+				return;
+			};
+
+			win.views.forEach((view: TabView) => {
+				if ((view.id != win.activeTabId) && view.isLoaded) {
+					this.scheduleTabSleep(win, view.id);
+				};
+			});
+		});
+	};
+
+	cancelTabSleep (id: string): void {
+		const timer = this.sleepTimers.get(id);
+
+		if (timer) {
+			clearTimeout(timer);
+			this.sleepTimers.delete(id);
+		};
+	};
+
+	/**
+	 * Puts an inactive tab to sleep: closes its middleware session and its renderer process,
+	 * and puts an unloaded view in its place under the same id. The tab keeps its button and
+	 * route, and setActiveTab loads it again on the next click, as for a tab restored at startup.
+	 */
+	sleepTab (win: AppWindow, id: string): void {
+		if (!win || win.isDestroyed() || !win.views || (win.activeTabId == id)) {
+			return;
+		};
+
+		const view = Util.getView(win, id);
+		if (!view || !view.webContents || view.webContents.isDestroyed()) {
+			return;
+		};
+
+		// Not loaded: either asleep already, deferred since startup, or still loading
+		if (!view.isLoaded) {
+			if (view.webContents.isLoading()) {
+				this.scheduleTabSleep(win, id);
+			};
+			return;
+		};
+
+		// Leave a tab alone while it plays sound or is being inspected
+		if (view.webContents.isCurrentlyAudible() || view.webContents.isDevToolsOpened()) {
+			this.scheduleTabSleep(win, id);
+			return;
+		};
+
+		this.closeTabSession(win, view, () => {
+			// The tab was closed, or put to sleep by another path, while its session closed
+			if (win.isDestroyed() || !win.views || (Util.getView(win, id) !== view)) {
+				return;
+			};
+
+			// The session token is gone with the session: the woken tab creates a new one
+			const data: TabData & { token?: string } = { ...view.data };
+			delete data.token;
+
+			const fresh = this.createTabView(win, id, data);
+			win.views[win.views.indexOf(view)] = fresh;
+
+			// The tab was activated while its session closed: show the fresh view, which loads now
+			if (win.activeTabId == id) {
+				win.contentView.removeChildView(view);
+				this.setActiveTab(win, id);
+			};
+
+			if (!view.webContents.isDestroyed()) {
+				view.webContents.close();
+			};
+
+			Util.log('info', `[WindowManager].sleepTab: tab ${id} is asleep`);
+		});
 	};
 
 	closeActiveTab (win: AppWindow): void {

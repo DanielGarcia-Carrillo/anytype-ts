@@ -10,7 +10,7 @@ enum ChatKey {
 const PageMainSettingsPersonal = forwardRef<I.PageRef, I.PageSettingsComponent>((props, ref) => {
 
 	const { config, linkStyle, fileStyle, fullscreenObject, hideSidebar, gridTitleClick, notificationSound, hideFileObjectsInTree, unicodeReplace } = S.Common;
-	const { hideTray, showMenuBar, alwaysShowTabs, hardwareAcceleration } = config;
+	const { hideTray, showMenuBar, alwaysShowTabs, hardwareAcceleration, tabSleepMinutes } = config;
 	const { theme, chatCmdSend, commentCmdSend, sendTyping } = S.Common;
 	const { networkConfig } = S.Auth;
 	const { preferYamux } = networkConfig;
@@ -77,6 +77,13 @@ const PageMainSettingsPersonal = forwardRef<I.PageRef, I.PageSettingsComponent>(
 		{ id: ChatKey.Enter, name: 'Enter' },
 		{ id: ChatKey.CmdEnter, name: `${cmd} + Enter` },
 	];
+
+	// Keep in sync with TAB_SLEEP_DEFAULT_MINUTES in electron/ts/window.ts
+	const tabSleepValue = String((undefined === tabSleepMinutes) ? 15 : tabSleepMinutes);
+	const tabSleepOptions: I.Option[] = [ 5, 15, 30, 60, 0 ].map(it => ({
+		id: String(it),
+		name: it ? U.Date.duration(it * 60) : translate('popupSettingsPersonalTabSleepNever'),
+	}));
 
 	const notificationSounds: I.Option[] = [
 		{ id: '', name: translate('popupSettingsPersonalNotificationSoundOff') },
@@ -157,6 +164,18 @@ const PageMainSettingsPersonal = forwardRef<I.PageRef, I.PageSettingsComponent>(
 							Renderer.send('setAlwaysShowTabs', v);
 							analytics.event(v ? 'ShowTabBar' : 'HideTabBar');
 						}}
+					/>
+				</div>
+
+				<div className="item">
+					<Label text={translate('popupSettingsPersonalTabSleep')} />
+					<Select
+						id="tabSleepMinutes"
+						value={tabSleepValue}
+						options={tabSleepOptions}
+						onChange={(v: string) => Renderer.send('setTabSleepMinutes', Number(v))}
+						arrowClassName="black"
+						menuParam={{ horizontal: I.MenuDirection.Right }}
 					/>
 				</div>
 

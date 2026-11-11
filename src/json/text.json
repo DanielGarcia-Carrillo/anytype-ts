@@ -1074,6 +1074,8 @@
 	"popupSettingsPersonalFileStyle": "File block default style",
 	"popupSettingsPersonalSidebar": "Automatically show and hide sidebar",
 	"popupSettingsPersonalAlwaysShowTabbar": "Always show tab bar",
+	"popupSettingsPersonalTabSleep": "Put inactive tabs to sleep after",
+	"popupSettingsPersonalTabSleepNever": "Never",
 	"popupSettingsPersonalHardwareAcceleration": "Hardware Acceleration",
 	"popupSettingsPersonalHideFileObjectsInTree": "Hide media files in page tree",
 	"popupConfirmHardwareAccelerationTitle": "Restart Required",
