@@ -6,6 +6,7 @@ import Util from './util';
 import { AppWindow, DownloadProgress } from './types';
 
 const TIMEOUT_UPDATE = 600 * 1000;
+const FORK_BUILD = true;
 
 class UpdateManager {
 
@@ -83,6 +84,12 @@ class UpdateManager {
 
 		if (config.updateDisabled) {
 			console.log('[UpdateManager].isAllowed, updateDisabled');
+			return false;
+		};
+
+		// Fork build: the update feed serves the official app, which would replace this one.
+		if (FORK_BUILD) {
+			console.log('[UpdateManager].isAllowed, fork build');
 			return false;
 		};
 
