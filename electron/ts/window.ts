@@ -31,6 +31,8 @@ const MENU_BAR_HEIGHT = 28;
 // Experiment switches for comparing memory with and without hidden background tabs, in one build
 const KEEP_BACKGROUND_TABS_VISIBLE = process.env.ANYTYPE_KEEP_TABS_VISIBLE === '1';
 const LOG_TAB_VISIBILITY = process.env.ANYTYPE_LOG_TAB_VISIBILITY === '1';
+const CYCLE_TABS = process.env.ANYTYPE_CYCLE_TABS === '1';
+const CYCLE_TABS_INTERVAL = Number(process.env.ANYTYPE_CYCLE_TABS_INTERVAL) || 8000;
 
 class WindowManager {
 
@@ -233,6 +235,10 @@ class WindowManager {
 				// Set the active tab (this will trigger loading for the active tab)
 				if (win.views && win.views[activeIndex]) {
 					this.setActiveTab(win, win.views[activeIndex].id);
+
+					if (CYCLE_TABS) {
+						this.cycleTabs(win, win.views[activeIndex].id);
+					};
 				};
 			} else {
 				this.createTab(win, {}, { setActive: true });
@@ -679,6 +685,28 @@ class WindowManager {
 		if (LOG_TAB_VISIBILITY) {
 			this.logTabVisibility(win);
 		};
+	};
+
+	/**
+	 * Experiment helper: once the first tab has booted, opens every tab in turn so they all
+	 * load, then returns to the tab that was active, for repeatable memory measurements
+	 */
+	cycleTabs (win: AppWindow, returnId: string): void {
+		const ids = (win.views || []).map((it: TabView) => it.id).concat(returnId);
+
+		ids.forEach((id: string, i: number) => {
+			setTimeout(() => {
+				if (win.isDestroyed()) {
+					return;
+				};
+
+				this.setActiveTab(win, id);
+
+				if (i == ids.length - 1) {
+					Util.log('info', `[WindowManager] tab cycle done: ${ids.length - 1} tabs`);
+				};
+			}, CYCLE_TABS_INTERVAL * (i + 2));
+		});
 	};
 
 	/**
