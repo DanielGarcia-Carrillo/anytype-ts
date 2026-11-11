@@ -210,12 +210,12 @@
 		"beforeBuild": "./electron/hook/beforebuild.js",
 		"afterSign": "./electron/hook/aftersign.js",
 		"afterPack": "./electron/hook/afterpack.js",
-		"appId": "com.anytype.anytype",
+		"appId": "com.anytype.anytype.fork",
 		"compression": "normal",
-		"productName": "Anytype",
+		"productName": "Anytype Fork",
 		"protocols": [
 			{
-				"name": "Anytype",
+				"name": "Anytype Fork",
 				"role": "Editor",
 				"schemes": [
 					"anytype"
