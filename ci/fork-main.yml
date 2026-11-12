@@ -1,0 +1,103 @@
+# Fork CI, installed into the generated main by generate-main.sh from
+# fork-tools/ci/fork-main.yml. Edit it there, not on main.
+#
+# - PR into main: builds main with the PR's branch added and runs the checks.
+#   The PR can only go green if it merges cleanly and nothing breaks.
+# - PR merged: adds its branch to fork.conf, then rebuilds and publishes main.
+# - Push to fork-tools, every 6 hours, or by hand: rebuilds main from the latest
+#   upstream and publishes it only if the checks pass. A broken upstream or patch
+#   leaves main at its last good build, and this run goes red.
+name: Fork main
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches: [fork-tools]
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: fork-main-${{ github.event_name == 'pull_request' && github.event.action != 'closed' && github.event.pull_request.number || 'publish' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  fork-main:
+    if: github.event_name != 'pull_request' || github.event.action != 'closed' || github.event.pull_request.merged
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      FORK_TOKEN: ${{ secrets.FORK_TOKEN }}
+      PR_OPEN: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+      PR_MERGED: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FORK_TOKEN || github.token }}
+
+      - name: Get fork tools
+        run: |
+          git fetch --quiet origin fork-tools
+          mkdir -p "$RUNNER_TEMP/tools"
+          git archive origin/fork-tools | tar -x -C "$RUNNER_TEMP/tools"
+
+      - name: Add the merged PR's branch to fork.conf
+        if: env.PR_MERGED == 'true'
+        run: |
+          conf="$RUNNER_TEMP/tools/fork.conf"
+          if grep -qE "^patch[[:space:]]+${HEAD_REF}([[:space:]]|$)" "$conf"; then
+            echo "$HEAD_REF is already in fork.conf"
+          else
+            echo "patch $HEAD_REF   # PR #$PR_NUMBER" >> "$conf"
+            echo "CONF_CHANGED=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Generate main
+        run: |
+          args=(--tools "$RUNNER_TEMP/tools" --out "$RUNNER_TEMP/result")
+          if [ "$PR_OPEN" = true ]; then args+=(--extra "$HEAD_REF"); fi
+          "$RUNNER_TEMP/tools/generate-main.sh" "${args[@]}"
+          git checkout --quiet --detach "$(cat "$RUNNER_TEMP/result")"
+
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install protoc
+        run: sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler libprotobuf-dev
+      - name: Check main
+        env:
+          FORK_BASE: refs/fork-main/upstream
+        run: "$RUNNER_TEMP/tools/ci/verify-ts.sh"
+
+      - name: Publish main
+        if: env.PR_OPEN != 'true'
+        run: |
+          if [ -z "$FORK_TOKEN" ]; then
+            echo "::error::Add a FORK_TOKEN secret (classic token with repo and workflow scopes) so this workflow can publish main."
+            exit 1
+          fi
+          git config user.name "Fork main generator"
+          git config user.email "fork-main@users.noreply.github.com"
+          git checkout --quiet --force --detach "$(cat "$RUNNER_TEMP/result")"
+          git clean -qfdx
+          if [ "${CONF_CHANGED:-0}" = 1 ]; then
+            old=$(git rev-parse origin/fork-tools)
+            git checkout --quiet --detach origin/fork-tools
+            cp "$RUNNER_TEMP/tools/fork.conf" fork.conf
+            git commit -qam "Add $HEAD_REF to fork.conf (PR #$PR_NUMBER)"
+            git push --force-with-lease="refs/heads/fork-tools:$old" origin HEAD:refs/heads/fork-tools
+            git fetch --quiet origin fork-tools
+          fi
+          args=(--tools "$RUNNER_TEMP/tools" --push --sync-mirror --expect "$(cat "$RUNNER_TEMP/result")")
+          # A squash-merged PR leaves one commit on main whose change is in the branch now listed.
+          if [ "$PR_MERGED" = true ]; then args+=(--allow-drop); fi
+          "$RUNNER_TEMP/tools/generate-main.sh" "${args[@]}"
