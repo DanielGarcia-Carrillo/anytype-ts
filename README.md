@@ -25,7 +25,7 @@ always give the same commit, so CI can check a build and then publish exactly it
 | `main` | Generated. Build and run this. Rewritten on every rebuild. Default branch. |
 | `fork-tools` | This branch: the script, `fork.conf`, `ci/` and this README. No shared history with upstream. |
 | upstream mirror (`develop` on heart and ts) | Plain copy of upstream, only ever fast-forwarded. |
-| `claude/*`, others | Patch branches. Base new ones on upstream, not on `main`. |
+| `dgc--<title>` | Patch branches (old `claude/*` names stay until cleaned up). Base new ones on upstream, not on `main`. |
 
 ## CI (`ci/fork-main.yml`, installed into main as `.github/workflows/fork-main.yml`)
 
