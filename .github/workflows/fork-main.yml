@@ -4,7 +4,7 @@
 # - PR into main: builds main with the PR's branch added and runs the checks.
 #   The PR can only go green if it merges cleanly and nothing breaks.
 # - PR merged: adds its branch to fork.conf, then rebuilds and publishes main.
-# - Push to fork-tools, every 6 hours, or by hand: rebuilds main from the latest
+# - Push to fork-tools, or "Run workflow" by hand: rebuilds main from the latest
 #   upstream and publishes it only if the checks pass. A broken upstream or patch
 #   leaves main at its last good build, and this run goes red.
 name: Fork main
@@ -15,8 +15,6 @@ on:
     types: [opened, synchronize, reopened, closed]
   push:
     branches: [fork-tools]
-  schedule:
-    - cron: '17 */6 * * *'
   workflow_dispatch:
 
 concurrency:

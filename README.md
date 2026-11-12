@@ -35,7 +35,7 @@ Upstream's own workflows are removed from main: they need upstream's secrets and
 | --- | --- |
 | PR into main opened or updated | Builds main with the PR's branch added and runs the checks. Red if it conflicts or breaks anything. |
 | PR merged into main | Adds its branch to fork.conf, rebuilds, checks, publishes. |
-| Push to fork-tools, every 6 hours, or "Run workflow" | Rebuilds from the latest upstream, checks, publishes if green. |
+| Push to fork-tools, or "Run workflow" on the Actions tab | Rebuilds from the latest upstream, checks, publishes if green. There is no schedule: main picks up upstream changes only when one of these runs. |
 
 The checks (`ci/verify-*.sh`):
 - **heart:** `go build ./...`, plus `go test` for every package the patches change.
@@ -48,7 +48,7 @@ The checks (`ci/verify-*.sh`):
 2. Settings > Secrets and variables > Actions: add `FORK_TOKEN`, a classic token with
    `repo`, `workflow` and (for kotlin) `read:packages`. It publishes main, because the
    built-in token cannot push workflow files, and it downloads the Android middleware.
-3. Settings > General: make `main` the default branch (needed for the schedule).
+3. Settings > General: make `main` the default branch (the "Run workflow" button only appears for workflows on the default branch).
 
 ## By hand
 
