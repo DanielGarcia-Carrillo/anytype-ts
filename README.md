@@ -14,9 +14,10 @@ automatically, and only after Daniel has checked the change.
   Fix-ups for an earlier change say which change they belong to.
 - **Make the right change, even if it touches code another fork change touched.**
   There are no separate long-lived feature branches to keep apart any more.
-- **Work lands through PRs into main** (short-lived `dgc--<title>` branches from main), or by
-  pushing straight to main for small things. CI checks both.
-- **Upstream comes in by merge, never by rebase or force-push**, so commit ids stay stable.
+- **Every change reaches main through a PR that Daniel merges himself.** Work on a
+  short-lived `dgc--<title>` branch from main and open a PR into main. Never push,
+  merge or force-push into main directly, not even small fixes or upstream updates.
+- **Upstream comes in by merge (in a PR), never by rebase or force-push**, so commit ids stay stable.
 - No Linear issue references and no session links in commits or PRs.
 
 ## CI (`.github/workflows/fork-main.yml` on main; scripts on this `fork-tools` branch)
@@ -25,10 +26,11 @@ Upstream's own workflows are not on main: they need upstream's secrets and runne
 
 | Event | What happens |
 | --- | --- |
-| PR into main, push to main | Builds and tests the result. |
-| "Run workflow" on the Actions tab | Merges the latest upstream into main, builds and tests it, and pushes main only if everything passes. A conflict or a failure leaves main as it was and turns the run red. |
+| PR into main | Builds and tests the result. |
+| A merged PR landing on main | Builds and tests main again. |
+| "Run workflow" on the Actions tab | Merges the latest upstream into a new `dgc--update-from-upstream-<sha>` branch and opens a PR into main. That PR's check builds and tests it; Daniel merges it. A conflict stops the run and opens nothing. |
 
-There is no schedule: main takes upstream only when you run the workflow.
+There is no schedule: upstream comes in only when you run the workflow and merge its PR.
 
 The checks (`ci/verify-*.sh`):
 - **heart:** `go build ./...`, plus `go test` for every package the fork changes.
@@ -39,11 +41,12 @@ Needs the `FORK_TOKEN` secret (classic token: `repo`, `workflow`, `read:packages
 
 ## By hand
 
-Merge upstream locally (full clone, on main):
+Merge upstream locally (full clone, on a new branch from main):
 
     git fetch origin fork-tools && git archive origin/fork-tools | tar -x -C /tmp/fork-tools
+    git switch -c dgc--update-from-upstream origin/main
     /tmp/fork-tools/sync-upstream.sh <upstream-url> <upstream-branch>
-    git push origin HEAD:main
+    git push origin HEAD    # then open a PR into main
 
-On a conflict the script stops and lists the files; merge `refs/fork-main/upstream` by hand,
-fix them, and push.
+On a conflict the script stops and lists the files; merge `refs/fork-main/upstream` by hand
+on that branch, fix them, push, and open the PR.
