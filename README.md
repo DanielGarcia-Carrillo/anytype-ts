@@ -1,66 +1,49 @@
-# Generated `main` for this fork
+# Fork `main`: one big branch
 
-`main` on this fork is generated, not edited by hand. It is always:
+`main` on this fork is the one branch for all fork work:
 
-    upstream default branch  +  every branch listed in fork.conf, merged in order  +  "Fork: CI"
+    upstream  +  every fork change, each as its own commit  +  upstream merged in over time
 
-`generate-main.sh` rebuilds it from scratch, so upstream updates never pile up
-as merge noise, and each fork change stays a separate branch. The same inputs
-always give the same commit, so CI can check a build and then publish exactly it.
+When a change is ready for upstream, cherry-pick its commit(s) onto a fresh branch from
+upstream and open the PR from there. Nothing is pushed to the upstream repository
+automatically, and only after Daniel has checked the change.
 
 ## Rules
 
-- **Nothing goes upstream automatically.** The tools only fetch from anyproto.
-  They push to this fork only (`main`, `fork-tools`, the mirror branch) and never
-  open PRs. A branch goes upstream only by hand, after Daniel has checked it.
-- **main never moves to a broken build.** CI rebuilds it and publishes only if
-  the checks pass. Otherwise main stays at its last good build and the run goes red.
-- **Do not push to main directly.** Open a PR into main, or add the branch to fork.conf.
-- **Do not delete a branch that is listed in fork.conf**, even after its PR merges.
+- **One logical change per commit, with a clear message**, so it can be cherry-picked later.
+  Fix-ups for an earlier change say which change they belong to.
+- **Make the right change, even if it touches code another fork change touched.**
+  There are no separate long-lived feature branches to keep apart any more.
+- **Work lands through PRs into main** (short-lived `dgc--<title>` branches from main), or by
+  pushing straight to main for small things. CI checks both.
+- **Upstream comes in by merge, never by rebase or force-push**, so commit ids stay stable.
+- No Linear issue references and no session links in commits or PRs.
 
-## Branches
+## CI (`.github/workflows/fork-main.yml` on main; scripts on this `fork-tools` branch)
 
-| Branch | What it is |
-| --- | --- |
-| `main` | Generated. Build and run this. Rewritten on every rebuild. Default branch. |
-| `fork-tools` | This branch: the script, `fork.conf`, `ci/` and this README. No shared history with upstream. |
-| upstream mirror (`develop` on heart and ts) | Plain copy of upstream, only ever fast-forwarded. |
-| `dgc--<title>` | Patch branches (old `claude/*` names stay until cleaned up). Base new ones on upstream, not on `main`. |
-
-## CI (`ci/fork-main.yml`, installed into main as `.github/workflows/fork-main.yml`)
-
-Upstream's own workflows are removed from main: they need upstream's secrets and runners.
+Upstream's own workflows are not on main: they need upstream's secrets and runners.
 
 | Event | What happens |
 | --- | --- |
-| PR into main opened or updated | Builds main with the PR's branch added and runs the checks. Red if it conflicts or breaks anything. |
-| PR merged into main | Adds its branch to fork.conf, rebuilds, checks, publishes. |
-| Push to fork-tools, or "Run workflow" on the Actions tab | Rebuilds from the latest upstream, checks, publishes if green. There is no schedule: main picks up upstream changes only when one of these runs. |
+| PR into main, push to main | Builds and tests the result. |
+| "Run workflow" on the Actions tab | Merges the latest upstream into main, builds and tests it, and pushes main only if everything passes. A conflict or a failure leaves main as it was and turns the run red. |
+
+There is no schedule: main takes upstream only when you run the workflow.
 
 The checks (`ci/verify-*.sh`):
-- **heart:** `go build ./...`, plus `go test` for every package the patches change.
+- **heart:** `go build ./...`, plus `go test` for every package the fork changes.
 - **ts:** typecheck and lint, plus unit tests. Upstream already has failing tests, so only tests that pass on upstream and fail on main count.
-- **kotlin:** `assembleDebug`, plus unit tests for every module the patches change.
+- **kotlin:** `assembleDebug`, plus unit tests for every module the fork changes.
 
-### One-time setup per fork
-
-1. Settings > Actions > General: allow Actions.
-2. Settings > Secrets and variables > Actions: add `FORK_TOKEN`, a classic token with
-   `repo`, `workflow` and (for kotlin) `read:packages`. It publishes main, because the
-   built-in token cannot push workflow files, and it downloads the Android middleware.
-3. Settings > General: make `main` the default branch (the "Run workflow" button only appears for workflows on the default branch).
+Needs the `FORK_TOKEN` secret (classic token: `repo`, `workflow`, `read:packages`).
 
 ## By hand
 
-From a full (non-shallow) clone of the fork:
+Merge upstream locally (full clone, on main):
 
-    git fetch origin fork-tools
-    git archive origin/fork-tools | tar -x -C /tmp/fork-tools
-    /tmp/fork-tools/generate-main.sh               # dry run: builds locally, pushes nothing
-    /tmp/fork-tools/generate-main.sh --extra my-branch   # try a branch before listing it
-    /tmp/fork-tools/generate-main.sh --push --sync-mirror   # publish without CI checks
+    git fetch origin fork-tools && git archive origin/fork-tools | tar -x -C /tmp/fork-tools
+    /tmp/fork-tools/sync-upstream.sh <upstream-url> <upstream-branch>
+    git push origin HEAD:main
 
-- **A patch was merged upstream:** the script reports it as "already contained"; delete its line.
-- **Conflict:** the script stops and names the branch and files; main is untouched.
-  Rebase that branch onto upstream (or reorder the list) and push it.
-- **Take a change out:** delete its line and publish with `--allow-drop`.
+On a conflict the script stops and lists the files; merge `refs/fork-main/upstream` by hand,
+fix them, and push.
