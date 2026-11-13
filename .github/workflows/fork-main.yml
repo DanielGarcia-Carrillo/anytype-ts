@@ -1,0 +1,75 @@
+# Fork CI. Lives on main as .github/workflows/fork-main.yml; scripts come from the fork-tools branch.
+#
+# main is the fork's one big branch: upstream plus every fork change as its own commit.
+# - PR into main, or push to main: build and test the result.
+# - "Run workflow" (Actions tab): merge the latest upstream into main, build and
+#   test it, and push main only if everything passes. Never force-pushes.
+# Nothing is ever pushed to the upstream (anyproto) repository.
+name: Fork main
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-main-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_URL: https://github.com/anyproto/anytype-ts.git
+  UPSTREAM_BRANCH: develop
+
+jobs:
+  fork-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FORK_TOKEN || github.token }}
+
+      - name: Get fork tools
+        run: |
+          git fetch --quiet origin fork-tools
+          mkdir -p "$RUNNER_TEMP/tools"
+          git archive origin/fork-tools | tar -x -C "$RUNNER_TEMP/tools"
+          git config user.name "Daniel Garcia Carrillo"
+          git config user.email "2312969+DanielGarcia-Carrillo@users.noreply.github.com"
+
+      - name: Merge latest upstream
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          "$RUNNER_TEMP/tools/sync-upstream.sh" "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then echo "NOTHING_TO_PUSH=1" >> "$GITHUB_ENV"; fi
+
+      - name: Find the upstream base
+        run: |
+          git fetch --quiet "$UPSTREAM_URL" "+refs/heads/$UPSTREAM_BRANCH:refs/fork-main/upstream"
+          echo "FORK_BASE=$(git merge-base HEAD refs/fork-main/upstream)" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+        if: env.NOTHING_TO_PUSH != '1'
+      - uses: actions/setup-node@v4
+        if: env.NOTHING_TO_PUSH != '1'
+        with:
+          node-version: 22
+      - name: Install protoc
+        if: env.NOTHING_TO_PUSH != '1'
+        run: sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler libprotobuf-dev
+      - name: Check
+        if: env.NOTHING_TO_PUSH != '1'
+        run: "$RUNNER_TEMP/tools/ci/verify-ts.sh"
+
+      - name: Push main
+        if: github.event_name == 'workflow_dispatch' && env.NOTHING_TO_PUSH != '1'
+        run: |
+          git reset -q --hard
+          git clean -qfdx
+          git push origin HEAD:refs/heads/main
