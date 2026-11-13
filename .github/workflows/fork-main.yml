@@ -1,0 +1,88 @@
+# Fork CI. Lives on main as .github/workflows/fork-main.yml; scripts come from the fork-tools branch.
+#
+# main is the fork's one big branch: upstream plus every fork change as its own commit.
+# - PR into main, or a merged PR landing on main: build and test the result.
+# - "Run workflow" (Actions tab): merge the latest upstream into a new branch
+#   dgc--update-from-upstream-<sha> made from main, and open a PR into main.
+#   The PR's own check then builds and tests it. Nothing is ever pushed or
+#   merged straight into main: Daniel merges every PR himself.
+# Nothing is ever pushed to the upstream (anyproto) repository.
+name: Fork main
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: fork-main-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  UPSTREAM_URL: https://github.com/anyproto/anytype-ts.git
+  UPSTREAM_BRANCH: develop
+
+jobs:
+  fork-main:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FORK_TOKEN || github.token }}
+
+      - name: Get fork tools
+        run: |
+          git fetch --quiet origin fork-tools
+          mkdir -p "$RUNNER_TEMP/tools"
+          git archive origin/fork-tools | tar -x -C "$RUNNER_TEMP/tools"
+          git config user.name "Daniel Garcia Carrillo"
+          git config user.email "2312969+DanielGarcia-Carrillo@users.noreply.github.com"
+
+      - name: Open a PR that merges the latest upstream
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.FORK_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::Add the FORK_TOKEN secret (classic token: repo, workflow)."; exit 1; }
+          "$RUNNER_TEMP/tools/sync-upstream.sh" "$UPSTREAM_URL" "$UPSTREAM_BRANCH"
+          if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then
+            echo "main already has the latest upstream"
+            exit 0
+          fi
+          up=$(git rev-parse --short=9 refs/fork-main/upstream)
+          branch="dgc--update-from-upstream-$up"
+          git push origin "HEAD:refs/heads/$branch"
+          existing=$(gh pr list --head "$branch" --base main --state open --json number --jq '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "PR #$existing already open for $branch"
+          else
+            gh pr create --base main --head "$branch" \
+              --title "Merge upstream $UPSTREAM_BRANCH ($up)" \
+              --body "Merges the latest upstream \`$UPSTREAM_BRANCH\` ($up) into main. Upstream's own workflow changes are left out. The Fork main check on this PR builds and tests the result."
+          fi
+
+      - name: Find the upstream base
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          git fetch --quiet "$UPSTREAM_URL" "+refs/heads/$UPSTREAM_BRANCH:refs/fork-main/upstream"
+          echo "FORK_BASE=$(git merge-base HEAD refs/fork-main/upstream)" >> "$GITHUB_ENV"
+
+      - uses: oven-sh/setup-bun@v2
+        if: github.event_name != 'workflow_dispatch'
+      - uses: actions/setup-node@v4
+        if: github.event_name != 'workflow_dispatch'
+        with:
+          node-version: 22
+      - name: Install protoc
+        if: github.event_name != 'workflow_dispatch'
+        run: sudo apt-get update -q && sudo apt-get install -y -q protobuf-compiler libprotobuf-dev
+      - name: Check
+        if: github.event_name != 'workflow_dispatch'
+        run: "$RUNNER_TEMP/tools/ci/verify-ts.sh"
