@@ -210,6 +210,9 @@
 		"appId": "com.anytype.anytype.fork",
 		"compression": "normal",
 		"productName": "Anytype Fork",
+		"extraMetadata": {
+			"productName": "Anytype Fork"
+		},
 		"protocols": [
 			{
 				"name": "Anytype Fork",
