@@ -31,7 +31,7 @@ Upstream's checks, and the secrets the fork needs for them:
 
 | Repo | Checks on a PR | Secrets |
 | --- | --- | --- |
-| kotlin | `check.yml`: license check, androidTest compile, all unit tests. `claude-code-review.yml`. `workflow.yml` builds and tests main after a merge. | `ANYTYPE_SECRET` (classic token with `read:packages`), `ANYTYPE_USER_SECRET` (its GitHub login), `ANYTYPE_AMPLITUDE_SECRET`, `ANYTYPE_AMPLITUDE_DEBUG_SECRET` and `ANYTYPE_SENTRY_DSN_SECRET` (any placeholder), `CLAUDE_CODE_OAUTH_TOKEN` for the review |
+| kotlin | `check.yml`: license check, androidTest compile, all unit tests. `claude-code-review.yml`. `workflow.yml` builds and tests main after a merge. | `ANYTYPE_SECRET` (classic token with `read:packages`), `ANYTYPE_USER_SECRET` (its GitHub login), `ANYTYPE_AMPLITUDE_SECRET`, `ANYTYPE_AMPLITUDE_DEBUG_SECRET` and `ANYTYPE_SENTRY_DSN_SECRET` (any placeholder). Optional: `CLAUDE_CODE_OAUTH_TOKEN`; without it the review skips itself |
 | heart | `test.yml`: license check, generated code, all unit tests (macOS). `golangci-lint.yml`: new lint issues. | none |
 | ts | none upstream: only the Fork main check | none |
 
