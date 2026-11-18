@@ -65,7 +65,7 @@ jobs:
           else
             gh pr create --base main --head "$branch" \
               --title "Merge upstream $UPSTREAM_BRANCH ($up)" \
-              --body "Merges the latest upstream \`$UPSTREAM_BRANCH\` ($up) into main. Upstream's own workflow changes are left out. The Fork main check on this PR builds and tests the result."
+              --body "Merges the latest upstream \`$UPSTREAM_BRANCH\` ($up) into main. Upstream's checks and the Fork main check run on this PR."
           fi
 
       - name: Find the upstream base
