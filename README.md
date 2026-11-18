@@ -22,7 +22,20 @@ automatically, and only after Daniel has checked the change.
 
 ## CI (`.github/workflows/fork-main.yml` on main; scripts on this `fork-tools` branch)
 
-Upstream's own workflows are not on main: they need upstream's secrets and runners.
+main keeps upstream's own workflows, and upstream's changes to them merge in like any other
+file, so every PR runs upstream's checks as well as the Fork main check. Workflows that only work
+in anyproto's repositories (CLA, mirrors, smoke tests) skip themselves in a fork. Release and
+nightly workflows only run by hand or on a schedule, and schedules do not run in forks.
+
+Upstream's checks, and the secrets the fork needs for them:
+
+| Repo | Checks on a PR | Secrets |
+| --- | --- | --- |
+| kotlin | `check.yml`: license check, androidTest compile, all unit tests. `claude-code-review.yml`. `workflow.yml` builds and tests main after a merge. | `ANYTYPE_SECRET` (classic token with `read:packages`), `ANYTYPE_USER_SECRET` (its GitHub login), `ANYTYPE_AMPLITUDE_SECRET`, `ANYTYPE_AMPLITUDE_DEBUG_SECRET` and `ANYTYPE_SENTRY_DSN_SECRET` (any placeholder), `CLAUDE_CODE_OAUTH_TOKEN` for the review |
+| heart | `test.yml`: license check, generated code, all unit tests (macOS). `golangci-lint.yml`: new lint issues. | none |
+| ts | none upstream: only the Fork main check | none |
+
+The Fork main check:
 
 | Event | What happens |
 | --- | --- |
