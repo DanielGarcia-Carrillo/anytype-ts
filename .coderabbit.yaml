@@ -1,0 +1,15 @@
+version: 3
+# Keep the settings from the CodeRabbit app for everything this file leaves out.
+inheritance: true
+reviews:
+  behavior:
+    multi_repo_analysis:
+      linked_repositories:
+        - repository: "DanielGarcia-Carrillo/anytype-heart"
+          instructions: >-
+            anytype-heart is the Go middleware (backend) that this desktop client
+            talks to over gRPC. It defines the protobuf commands, events and models
+            the app sends and receives (pb/protos, pkg/lib/pb/model/protos) and
+            implements them under core/. Check that request fields, enum values,
+            event handling and object relation keys used by the app match what
+            the middleware accepts and emits.
