@@ -211,7 +211,8 @@ const MenuSyncStatus = forwardRef<I.MenuRef, I.Menu>((props, ref) => {
 				iconColor = 'accent100';
 				break;
 			};
-			case I.P2PStatus.NotPossible: {
+			case I.P2PStatus.NotPossible:
+			case I.P2PStatus.Restricted: {
 				message = translate('menuSyncStatusP2PRestricted');
 				iconColor = 'darkRed';
 				break;
