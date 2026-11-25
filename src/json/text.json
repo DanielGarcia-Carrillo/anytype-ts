@@ -1,5 +1,6 @@
 {
 	"commonError": "Error",
+	"errorSessionExpired": "Your session has expired. Reload the app to log in again.",
 	"commonOr": "or",
 	"commonWhere": "Where",
 	"commonMore": "more",
